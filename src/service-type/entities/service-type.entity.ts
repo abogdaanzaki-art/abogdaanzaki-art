@@ -4,9 +4,11 @@ import {
   Column,
   CreateDateColumn,
   OneToMany,
+  ManyToMany,
 } from 'typeorm';
 import { OrderItem } from '../../orders/entities/order-item.entity';
 import { PromotionService } from '../../promotion/entities/promotion-service.entity';
+import { AssistantProfile } from '../../assistant-profile/entities/assistant-profile.entity';
 
 @Entity('service_types')
 export class ServiceType {
@@ -36,4 +38,7 @@ export class ServiceType {
 
   @OneToMany(() => PromotionService, (ps) => ps.serviceType)
   promotions: PromotionService[];
+
+  @ManyToMany(() => AssistantProfile, (ap) => ap.services)
+  assistantProfiles: AssistantProfile[];
 }

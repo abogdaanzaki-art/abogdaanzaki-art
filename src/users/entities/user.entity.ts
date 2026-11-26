@@ -6,6 +6,7 @@ import {
   OneToMany,
   ManyToMany,
   JoinTable,
+  OneToOne,
 } from 'typeorm';
 import { UserRole } from '../../roles/entities/user-role.entity';
 import { Address } from '../../address/entities/address.entity';
@@ -13,6 +14,8 @@ import { Order } from '../../orders/entities/order.entity';
 import { OrderItemAssignment } from '../../orders/entities/order-item-assignment.entity';
 import { Payment } from '../../payment/entities/payment.entity';
 import { Review } from '../../review/entities/review.entity';
+import { AssistantProfile } from '../../assistant-profile/entities/assistant-profile.entity';
+import { FavoriteAssistant } from '../../favorites/entities/favorite-assistant.entity';
 
 @Entity('users')
 export class User {
@@ -57,4 +60,10 @@ export class User {
 
   @OneToMany(() => Review, (r) => r.assistant)
   reviewsReceived: Review[];
+
+  @OneToOne(() => AssistantProfile, (ap) => ap.user, { cascade: false })
+  assistantProfile: AssistantProfile;
+
+  @OneToMany(() => FavoriteAssistant, (f) => f.customer)
+  favoriteAssistants: FavoriteAssistant[];
 }
