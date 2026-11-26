@@ -1,14 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
 import {
+  ArrayUnique,
   IsArray,
   IsBoolean,
+  IsEnum,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsPositive,
   IsString,
+  IsUrl,
   MaxLength,
-  ValidateNested,
+  MinLength,
 } from 'class-validator';
 
 export class CreateAssistantProfileDto {
@@ -20,11 +23,13 @@ export class CreateAssistantProfileDto {
 
   @ApiPropertyOptional({ example: 'https://cdn.mashwari.com/avatar/12.jpg' })
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   profileImageUrl?: string;
 
   @ApiProperty({ example: 'الرياض' })
   @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
   @MaxLength(100)
   city: string;
 
@@ -33,6 +38,7 @@ export class CreateAssistantProfileDto {
   @IsArray()
   @IsInt({ each: true })
   @IsPositive({ each: true })
+  @ArrayUnique()
   serviceTypeIds?: number[];
 }
 
@@ -45,12 +51,14 @@ export class UpdateAssistantProfileDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   profileImageUrl?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @MinLength(1)
   @MaxLength(100)
   city?: string;
 
@@ -59,6 +67,7 @@ export class UpdateAssistantProfileDto {
   @IsArray()
   @IsInt({ each: true })
   @IsPositive({ each: true })
+  @ArrayUnique()
   serviceTypeIds?: number[];
 }
 
@@ -70,6 +79,6 @@ export class UpdateAvailabilityDto {
 
 export class UpdateVerificationDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
-  @IsString()
+  @IsEnum(['APPROVED', 'REJECTED'])
   verificationStatus: 'APPROVED' | 'REJECTED';
 }

@@ -21,6 +21,35 @@ import {
 import { VerificationStatus } from './assistant-profile.types';
 import { paginate, paginated } from '../common/pagination';
 
+export interface PublicAssistantDto {
+  id: number;
+  userId: number;
+  fullName: string;
+  bio: string | null;
+  profileImageUrl: string | null;
+  city: string | null;
+  isAvailable: boolean;
+  verificationStatus: VerificationStatus;
+  averageRating: number | null;
+  services: { id: number; code: string; name: string }[];
+}
+
+export interface AdminAssistantDto extends PublicAssistantDto {
+  email: string;
+  phone: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface OwnAssistantDto extends PublicAssistantDto {
+  email: string;
+  phone: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 @Injectable()
 export class AssistantProfileService {
   constructor(
@@ -44,7 +73,7 @@ export class AssistantProfileService {
     return roles.some((r) => r.role.name === 'ASSISTANT');
   }
 
-  async createMine(userId: number, dto: CreateAssistantProfileDto) {
+  async createMine(userId: number, dto: CreateAssistantProfileDto): Promise<OwnAssistantDto> {
     await this.ensureAssistant(userId);
 
     const existing = await this.profiles.findOne({ where: { userId } });
@@ -53,11 +82,11 @@ export class AssistantProfileService {
     return this.dataSource.transaction(async (em) => {
       const profile = em.create(AssistantProfile, {
         userId,
-        bio: dto.bio,
-        profileImageUrl: dto.profileImageUrl,
+        bio: dto.bio ?? null,
+        profileImageUrl: dto.profileImageUrl ?? null,
         city: dto.city,
         verificationStatus: 'PENDING' as VerificationStatus,
-        isAvailable: true,
+        isAvailable: false,
         services: [],
       });
       await em.save(profile);
@@ -72,18 +101,27 @@ export class AssistantProfileService {
         profile.services = services;
         await em.save(profile);
       }
-      return this.findOneOwned(userId);
+
+      // Reload within the same transaction so we see uncommitted data.
+      const reloaded = await em.findOne(AssistantProfile, {
+        where: { id: profile.id },
+        relations: ['services', 'user'],
+      });
+      const avgRating = await this.getAvgRating(userId);
+      return this.toOwnDto(reloaded!, avgRating);
     });
   }
 
-  async findMine(userId: number) {
-    return this.findOneOwned(userId);
+  async findMine(userId: number): Promise<OwnAssistantDto> {
+    const profile = await this.findOneOwned(userId);
+    const avgRating = await this.getAvgRating(userId);
+    return this.toOwnDto(profile, avgRating);
   }
 
-  async updateMine(userId: number, dto: UpdateAssistantProfileDto) {
-    const profile = await this.findOneOwned(userId);
+  async updateMine(userId: number, dto: UpdateAssistantProfileDto): Promise<OwnAssistantDto> {
+    const owned = await this.findOneOwned(userId);
     return this.dataSource.transaction(async (em) => {
-      const managed = await em.findOne(AssistantProfile, { where: { id: profile.id }, relations: ['services'] });
+      const managed = await em.findOne(AssistantProfile, { where: { id: owned.id }, relations: ['services', 'user'] });
       if (!managed) throw new NotFoundException('Assistant profile not found');
 
       if (dto.bio !== undefined) managed.bio = dto.bio;
@@ -103,17 +141,35 @@ export class AssistantProfileService {
           managed.services = services;
         }
       }
-      return em.save(managed);
+      const saved = await em.save(managed);
+      const reloaded = await em.findOne(AssistantProfile, {
+        where: { id: saved.id },
+        relations: ['services', 'user'],
+      });
+      const avgRating = await this.getAvgRating(userId);
+      return this.toOwnDto(reloaded!, avgRating);
     });
   }
 
-  async updateAvailability(userId: number, dto: UpdateAvailabilityDto) {
+  async updateAvailability(userId: number, dto: UpdateAvailabilityDto): Promise<OwnAssistantDto> {
     const profile = await this.findOneOwned(userId);
+
+    if (dto.isAvailable) {
+      if (profile.verificationStatus !== 'APPROVED') {
+        throw new BadRequestException('Cannot enable availability before verification is approved');
+      }
+      const user = await this.users.findOne({ where: { id: userId } });
+      if (!user || !user.isActive) {
+        throw new BadRequestException('Cannot enable availability on an inactive account');
+      }
+    }
     profile.isAvailable = dto.isAvailable;
-    return this.profiles.save(profile);
+    await this.profiles.save(profile);
+    const reloaded = await this.findOneOwned(userId);
+    const avgRating = await this.getAvgRating(userId);
+    return this.toOwnDto(reloaded, avgRating);
   }
 
-  /** Approved + available assistants, with optional city filter. */
   async findAvailable(query: any) {
     const { skip, take, page, limit } = paginate(query);
     const qb = this.profiles
@@ -130,12 +186,13 @@ export class AssistantProfileService {
       qb.innerJoin('p.services', 'fs', 'fs.id = :sid', { sid: query.serviceTypeId });
     }
     qb.orderBy('p.updatedAt', 'DESC').skip(skip).take(take);
-    const [data, total] = await qb.getManyAndCount();
-    return paginated(data.map((p) => this.toPublicDto(p)), total, page, limit);
+    const [rows, total] = await qb.getManyAndCount();
+    const ratings = await this.getAvgRatings(rows.map((r) => r.userId));
+    const data = rows.map((p) => this.toPublicDto(p, ratings.get(p.userId) ?? null));
+    return paginated(data, total, page, limit);
   }
 
-  /** Public view of a specific assistant. */
-  async findOnePublic(assistantId: number) {
+  async findOnePublic(assistantId: number): Promise<PublicAssistantDto> {
     const profile = await this.profiles.findOne({
       where: { userId: assistantId },
       relations: ['services', 'user'],
@@ -143,10 +200,16 @@ export class AssistantProfileService {
     if (!profile) throw new NotFoundException('Assistant profile not found');
     const isAssistant = await this.userHasAssistantRole(assistantId);
     if (!isAssistant) throw new NotFoundException('Assistant profile not found');
-    return this.toPublicDto(profile);
+    if (profile.verificationStatus !== 'APPROVED') {
+      throw new NotFoundException('Assistant profile not found');
+    }
+    if (!profile.user || !profile.user.isActive) {
+      throw new NotFoundException('Assistant profile not found');
+    }
+    const avgRating = await this.getAvgRating(assistantId);
+    return this.toPublicDto(profile, avgRating);
   }
 
-  /** Admin: all profiles with pagination + verification filter. */
   async findAllAdmin(query: any) {
     const { skip, take, page, limit } = paginate(query);
     const qb = this.profiles
@@ -161,22 +224,30 @@ export class AssistantProfileService {
       qb.andWhere('p.city = :city', { city: query.city });
     }
     qb.skip(skip).take(take);
-    const [data, total] = await qb.getManyAndCount();
+    const [rows, total] = await qb.getManyAndCount();
+    const ratings = await this.getAvgRatings(rows.map((r) => r.userId));
+    const data = rows.map((p) => this.toAdminDto(p, ratings.get(p.userId) ?? null));
     return paginated(data, total, page, limit);
   }
 
-  async updateVerification(assistantId: number, dto: UpdateVerificationDto) {
-    const profile = await this.profiles.findOne({ where: { userId: assistantId } });
+  async updateVerification(assistantId: number, dto: UpdateVerificationDto): Promise<AdminAssistantDto> {
+    const profile = await this.profiles.findOne({ where: { userId: assistantId }, relations: ['services', 'user'] });
     if (!profile) throw new NotFoundException('Assistant profile not found');
     const status = dto.verificationStatus as VerificationStatus;
-    if (!['APPROVED', 'REJECTED'].includes(status)) {
-      throw new BadRequestException('verificationStatus must be APPROVED or REJECTED');
-    }
     profile.verificationStatus = status;
-    return this.profiles.save(profile);
+    if (status === 'REJECTED') {
+      profile.isAvailable = false;
+    }
+    const saved = await this.profiles.save(profile);
+    const reloaded = await this.profiles.findOne({
+      where: { id: saved.id },
+      relations: ['services', 'user'],
+    });
+    const avgRating = await this.getAvgRating(assistantId);
+    return this.toAdminDto(reloaded!, avgRating);
   }
 
-  private async findOneOwned(userId: number) {
+  private async findOneOwned(userId: number): Promise<AssistantProfile> {
     const profile = await this.profiles.findOne({
       where: { userId },
       relations: ['services', 'user'],
@@ -185,18 +256,64 @@ export class AssistantProfileService {
     return profile;
   }
 
-  /** Strip sensitive fields (passwordHash) from the user relation. */
-  private toPublicDto(profile: AssistantProfile) {
+  private async getAvgRating(assistantId: number): Promise<number | null> {
+    const result = await this.reviews
+      .createQueryBuilder('r')
+      .select('AVG(r.rating)', 'avg')
+      .where('r.assistantId = :assistantId', { assistantId })
+      .getRawOne();
+    return result?.avg !== null && result?.avg !== undefined ? Number(Number(result.avg).toFixed(2)) : null;
+  }
+
+  private async getAvgRatings(assistantIds: number[]): Promise<Map<number, { avg: number | null; count: number }>> {
+    const map = new Map<number, { avg: number | null; count: number }>();
+    if (assistantIds.length === 0) return map;
+    const rows = await this.reviews
+      .createQueryBuilder('r')
+      .select('r.assistantId', 'assistantId')
+      .addSelect('AVG(r.rating)', 'avg')
+      .addSelect('COUNT(r.id)', 'count')
+      .where('r.assistantId IN (:...ids)', { ids: assistantIds })
+      .groupBy('r.assistantId')
+      .getRawMany();
+    for (const row of rows) {
+      map.set(Number(row.assistantId), {
+        avg: row.avg !== null ? Number(Number(row.avg).toFixed(2)) : null,
+        count: Number(row.count),
+      });
+    }
+    return map;
+  }
+
+  private toPublicDto(profile: AssistantProfile, avgRating: number | null): PublicAssistantDto {
     return {
       id: profile.id,
       userId: profile.userId,
-      fullName: profile.user?.fullName,
+      fullName: profile.user?.fullName ?? '',
       bio: profile.bio,
       profileImageUrl: profile.profileImageUrl,
       city: profile.city,
-      verificationStatus: profile.verificationStatus,
       isAvailable: profile.isAvailable,
+      verificationStatus: profile.verificationStatus,
+      averageRating: avgRating,
       services: (profile.services || []).map((s) => ({ id: s.id, code: s.code, name: s.name })),
+    };
+  }
+
+  private toAdminDto(profile: AssistantProfile, avgRating: number | null): AdminAssistantDto {
+    return {
+      ...this.toPublicDto(profile, avgRating),
+      email: profile.user?.email ?? '',
+      phone: profile.user?.phone ?? null,
+      isActive: profile.user?.isActive ?? false,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
+    };
+  }
+
+  private toOwnDto(profile: AssistantProfile, avgRating: number | null): OwnAssistantDto {
+    return {
+      ...this.toAdminDto(profile, avgRating),
     };
   }
 }

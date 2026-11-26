@@ -6,12 +6,13 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, IsNull, Not } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { OrderItem } from './entities/order-item.entity';
 import { OrderItemAssignment } from './entities/order-item-assignment.entity';
 import { Order } from './entities/order.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../roles/entities/user-role.entity';
+import { AssistantProfile } from '../assistant-profile/entities/assistant-profile.entity';
 import { AssignmentStatus, OrderItemStatus, OrderStatus } from './order-status.enum';
 import { OfferAssignmentsDto, UpdateAssignmentStatusDto, UpdateOrderItemStatusDto } from './dto/assignment.dto';
 import { paginate, paginated } from '../common/pagination';
@@ -24,6 +25,7 @@ export class AssignmentsService {
     @InjectRepository(Order) private orders: Repository<Order>,
     @InjectRepository(User) private users: Repository<User>,
     @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
+    @InjectRepository(AssistantProfile) private profiles: Repository<AssistantProfile>,
     private dataSource: DataSource,
   ) {}
 
@@ -35,19 +37,28 @@ export class AssignmentsService {
   }
 
   /** Admin or customer creates offers for an order item to a set of assistants. */
-  async offer(orderItemId: number, dto: OfferAssignmentsDto) {
+  async offer(
+    orderItemId: number,
+    dto: OfferAssignmentsDto,
+    actorId: number,
+    actorRoles: string[],
+  ) {
     const item = await this.items.findOne({ where: { id: orderItemId }, relations: ['order'] });
     if (!item) throw new NotFoundException('Order item not found');
     if (item.status === 'COMPLETED' || item.status === 'CANCELLED') {
       throw new BadRequestException('Cannot offer a completed/cancelled item');
     }
 
-    // Verify all assistants exist and have ASSISTANT role
-    for (const aid of dto.assistantIds) {
-      const roles = await this.userRoles.find({ where: { userId: aid }, relations: ['role'] });
-      if (!roles.some((r) => r.role.name === 'ASSISTANT')) {
-        throw new BadRequestException(`User ${aid} is not an assistant`);
+    // Customer ownership check
+    if (actorRoles.includes('CUSTOMER') && !actorRoles.includes('ADMIN')) {
+      if (item.order.customerId !== actorId) {
+        throw new ForbiddenException('You can only create offers for your own orders');
       }
+    }
+
+    // Eligibility check for each assistant
+    for (const aid of dto.assistantIds) {
+      await this.checkAssistantEligibility(aid, item.serviceTypeId);
     }
 
     const created: OrderItemAssignment[] = [];
@@ -67,6 +78,35 @@ export class AssignmentsService {
       await this.items.save(item);
     }
     return created;
+  }
+
+  /** Verify an assistant is eligible to receive an offer for a given service type. */
+  private async checkAssistantEligibility(assistantId: number, serviceTypeId: number) {
+    const user = await this.users.findOne({ where: { id: assistantId } });
+    if (!user) throw new BadRequestException(`User ${assistantId} not found`);
+    if (!user.isActive) throw new BadRequestException(`User ${assistantId} is inactive`);
+
+    const roles = await this.userRoles.find({ where: { userId: assistantId }, relations: ['role'] });
+    if (!roles.some((r) => r.role.name === 'ASSISTANT')) {
+      throw new BadRequestException(`User ${assistantId} is not an assistant`);
+    }
+
+    const profile = await this.profiles.findOne({
+      where: { userId: assistantId },
+      relations: ['services'],
+    });
+    if (!profile) {
+      throw new BadRequestException(`Assistant ${assistantId} has no profile`);
+    }
+    if (profile.verificationStatus !== 'APPROVED') {
+      throw new BadRequestException(`Assistant ${assistantId} is not verified`);
+    }
+    if (!profile.isAvailable) {
+      throw new BadRequestException(`Assistant ${assistantId} is not currently available`);
+    }
+    if (!profile.services.some((s) => s.id === serviceTypeId)) {
+      throw new BadRequestException(`Assistant ${assistantId} does not support service type ${serviceTypeId}`);
+    }
   }
 
   /**
@@ -90,7 +130,6 @@ export class AssignmentsService {
 
     if (newStatus === 'ACCEPTED') {
       return this.dataSource.transaction(async (em) => {
-        // Lock the order item row for the duration of the transaction.
         const item = await em.findOne(OrderItem, {
           where: { id: assignment.orderItemId },
           lock: { mode: 'pessimistic_write' },
@@ -100,7 +139,6 @@ export class AssignmentsService {
           throw new ConflictException('Order item already assigned to another assistant');
         }
 
-        // Atomic conditional update: only set ACCEPTED if still OFFERED.
         const result = await em
           .createQueryBuilder()
           .update(OrderItemAssignment)
@@ -112,7 +150,6 @@ export class AssignmentsService {
           throw new ConflictException('Assignment was no longer offerable');
         }
 
-        // Reject all other OFFERED assignments for the same item.
         await em
           .createQueryBuilder()
           .update(OrderItemAssignment)
@@ -128,14 +165,12 @@ export class AssignmentsService {
         item.startedAt = new Date();
         await em.save(item);
 
-        // Update order status if all items assigned/in progress
         await this.refreshOrderStatus(em, item.orderId);
 
         return em.findOne(OrderItemAssignment, { where: { id: assignmentId }, relations: ['orderItem', 'assistant'] });
       });
     }
 
-    // REJECTED or WITHDRAWN
     assignment.status = newStatus;
     assignment.respondedAt = new Date();
     await this.assignments.save(assignment);
@@ -196,7 +231,6 @@ export class AssignmentsService {
     });
   }
 
-  /** Refresh order status based on its items' statuses. */
   private async refreshOrderStatus(em: any, orderId: number) {
     const items = await em.find(OrderItem, { where: { orderId } });
     if (items.length === 0) return;

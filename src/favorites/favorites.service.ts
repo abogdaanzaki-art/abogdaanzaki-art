@@ -6,13 +6,29 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { FavoriteAssistant } from './entities/favorite-assistant.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../roles/entities/user-role.entity';
 import { AssistantProfile } from '../assistant-profile/entities/assistant-profile.entity';
+import { ServiceType } from '../service-type/entities/service-type.entity';
 import { Review } from '../review/entities/review.entity';
 import { paginate, paginated } from '../common/pagination';
+
+export interface FavoriteDto {
+  favoriteId: number;
+  assistantId: number;
+  fullName: string;
+  bio: string | null;
+  profileImageUrl: string | null;
+  city: string | null;
+  isAvailable: boolean;
+  bookable: boolean;
+  averageRating: number | null;
+  reviewCount: number;
+  favoritedAt: Date;
+  services: { id: number; code: string; name: string }[];
+}
 
 @Injectable()
 export class FavoritesService {
@@ -22,6 +38,8 @@ export class FavoritesService {
     @InjectRepository(UserRole) private userRoles: Repository<UserRole>,
     @InjectRepository(AssistantProfile) private profiles: Repository<AssistantProfile>,
     @InjectRepository(Review) private reviews: Repository<Review>,
+    @InjectRepository(ServiceType) private serviceTypes: Repository<ServiceType>,
+    private dataSource: DataSource,
   ) {}
 
   private async ensureCustomer(userId: number) {
@@ -31,28 +49,51 @@ export class FavoritesService {
     }
   }
 
-  private async ensureIsAssistant(assistantId: number) {
-    const roles = await this.userRoles.find({ where: { userId: assistantId }, relations: ['role'] });
-    if (!roles.some((r) => r.role.name === 'ASSISTANT')) {
-      throw new BadRequestException('Target user is not an assistant');
-    }
-  }
-
-  async add(customerId: number, assistantId: number) {
+  async add(customerId: number, assistantId: number): Promise<FavoriteDto> {
     await this.ensureCustomer(customerId);
     if (customerId === assistantId) {
       throw new BadRequestException('You cannot add yourself as a favorite');
     }
+
     const assistant = await this.users.findOne({ where: { id: assistantId } });
     if (!assistant) throw new NotFoundException('Assistant not found');
-    await this.ensureIsAssistant(assistantId);
+
+    const roles = await this.userRoles.find({ where: { userId: assistantId }, relations: ['role'] });
+    if (!roles.some((r) => r.role.name === 'ASSISTANT')) {
+      throw new BadRequestException('Target user is not an assistant');
+    }
+
+    if (!assistant.isActive) {
+      throw new BadRequestException('Target assistant account is inactive');
+    }
+
+    const profile = await this.profiles.findOne({
+      where: { userId: assistantId },
+      relations: ['services'],
+    });
+    if (!profile) {
+      throw new BadRequestException('Target user does not have an assistant profile');
+    }
+    if (profile.verificationStatus !== 'APPROVED') {
+      throw new BadRequestException('Target assistant is not verified');
+    }
 
     const existing = await this.favorites.findOne({ where: { customerId, assistantId } });
     if (existing) throw new ConflictException('This assistant is already in your favorites');
 
     const fav = this.favorites.create({ customerId, assistantId });
-    await this.favorites.save(fav);
-    return this.toPublicDto(fav, assistant, await this.getProfile(assistantId), await this.getAvgRating(assistantId));
+    try {
+      await this.favorites.save(fav);
+    } catch (err: any) {
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        throw new ConflictException('This assistant is already in your favorites');
+      }
+      throw err;
+    }
+
+    const stats = await this.getRatingStats([assistantId]);
+    const stat = stats.get(assistantId) ?? { avg: null, count: 0 };
+    return this.toDto(fav, assistant, profile, stat.avg, stat.count);
   }
 
   async list(customerId: number, query: any) {
@@ -62,26 +103,21 @@ export class FavoritesService {
       .createQueryBuilder('f')
       .innerJoinAndSelect('f.assistant', 'u')
       .leftJoinAndSelect('u.assistantProfile', 'ap')
+      .leftJoinAndSelect('ap.services', 'st')
       .where('f.customerId = :customerId', { customerId })
       .orderBy('f.createdAt', 'DESC')
       .skip(skip)
       .take(take);
     const [rows, total] = await qb.getManyAndCount();
 
-    const enriched = await Promise.all(
-      rows.map(async (f) => ({
-        id: f.id,
-        assistantId: f.assistantId,
-        fullName: f.assistant?.fullName,
-        city: f.assistant?.assistantProfile?.city ?? null,
-        profileImageUrl: f.assistant?.assistantProfile?.profileImageUrl ?? null,
-        isAvailable: f.assistant?.assistantProfile?.isAvailable ?? null,
-        verificationStatus: f.assistant?.assistantProfile?.verificationStatus ?? null,
-        averageRating: await this.getAvgRating(f.assistantId),
-        favoritedAt: f.createdAt,
-      })),
-    );
-    return paginated(enriched, total, page, limit);
+    const assistantIds = rows.map((r) => r.assistantId);
+    const stats = await this.getRatingStats(assistantIds);
+
+    const data = rows.map((f) => {
+      const stat = stats.get(f.assistantId) ?? { avg: null, count: 0 };
+      return this.toDto(f, f.assistant, f.assistant?.assistantProfile ?? null, stat.avg, stat.count);
+    });
+    return paginated(data, total, page, limit);
   }
 
   async remove(customerId: number, assistantId: number) {
@@ -92,35 +128,54 @@ export class FavoritesService {
     return { removed: true };
   }
 
-  private getProfile(assistantId: number) {
-    return this.profiles.findOne({ where: { userId: assistantId } });
-  }
-
-  private async getAvgRating(assistantId: number): Promise<number | null> {
-    const { avg } = await this.reviews
+  private async getRatingStats(
+    assistantIds: number[],
+  ): Promise<Map<number, { avg: number | null; count: number }>> {
+    const map = new Map<number, { avg: number | null; count: number }>();
+    if (assistantIds.length === 0) return map;
+    const rows = await this.reviews
       .createQueryBuilder('r')
-      .select('AVG(r.rating)', 'avg')
-      .where('r.assistantId = :assistantId', { assistantId })
-      .getRawOne();
-    return avg !== null && avg !== undefined ? Number(Number(avg).toFixed(2)) : null;
+      .select('r.assistantId', 'assistantId')
+      .addSelect('AVG(r.rating)', 'avg')
+      .addSelect('COUNT(r.id)', 'count')
+      .where('r.assistantId IN (:...ids)', { ids: assistantIds })
+      .groupBy('r.assistantId')
+      .getRawMany();
+    for (const row of rows) {
+      map.set(Number(row.assistantId), {
+        avg: row.avg !== null ? Number(Number(row.avg).toFixed(2)) : null,
+        count: Number(row.count),
+      });
+    }
+    return map;
   }
 
-  private toPublicDto(
+  private toDto(
     fav: FavoriteAssistant,
-    assistant: User,
+    assistant: User | null,
     profile: AssistantProfile | null,
     avgRating: number | null,
-  ) {
+    reviewCount: number,
+  ): FavoriteDto {
+    const bookable =
+      !!assistant &&
+      assistant.isActive &&
+      !!profile &&
+      profile.verificationStatus === 'APPROVED' &&
+      profile.isAvailable;
     return {
-      id: fav.id,
+      favoriteId: fav.id,
       assistantId: fav.assistantId,
-      fullName: assistant.fullName,
-      city: profile?.city ?? null,
+      fullName: assistant?.fullName ?? '',
+      bio: profile?.bio ?? null,
       profileImageUrl: profile?.profileImageUrl ?? null,
-      isAvailable: profile?.isAvailable ?? null,
-      verificationStatus: profile?.verificationStatus ?? null,
+      city: profile?.city ?? null,
+      isAvailable: profile?.isAvailable ?? false,
+      bookable,
       averageRating: avgRating,
+      reviewCount,
       favoritedAt: fav.createdAt,
+      services: (profile?.services ?? []).map((s) => ({ id: s.id, code: s.code, name: s.name })),
     };
   }
 }

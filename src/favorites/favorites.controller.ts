@@ -1,5 +1,5 @@
-import { Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Controller, Delete, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FavoritesService } from './favorites.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
@@ -15,19 +15,22 @@ export class FavoritesController {
 
   @Roles('CUSTOMER')
   @Post(':assistantId')
-  add(@CurrentUser('sub') userId: number, @Param('assistantId') assistantId: string) {
-    return this.service.add(userId, parseInt(assistantId, 10));
+  @ApiOperation({ summary: 'Add an assistant to favorites (CUSTOMER only)' })
+  add(@CurrentUser('sub') userId: number, @Param('assistantId', ParseIntPipe) assistantId: number) {
+    return this.service.add(userId, assistantId);
   }
 
   @Roles('CUSTOMER')
   @Get()
+  @ApiOperation({ summary: 'List the current customer favorites (CUSTOMER only)' })
   list(@CurrentUser('sub') userId: number, @Query() q: any) {
     return this.service.list(userId, q);
   }
 
   @Roles('CUSTOMER')
   @Delete(':assistantId')
-  remove(@CurrentUser('sub') userId: number, @Param('assistantId') assistantId: string) {
-    return this.service.remove(userId, parseInt(assistantId, 10));
+  @ApiOperation({ summary: 'Remove an assistant from favorites (CUSTOMER only)' })
+  remove(@CurrentUser('sub') userId: number, @Param('assistantId', ParseIntPipe) assistantId: number) {
+    return this.service.remove(userId, assistantId);
   }
 }

@@ -4,8 +4,6 @@ import {
   Column,
   CreateDateColumn,
   OneToMany,
-  ManyToMany,
-  JoinTable,
   OneToOne,
 } from 'typeorm';
 import { UserRole } from '../../roles/entities/user-role.entity';
@@ -40,7 +38,7 @@ export class User {
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
   createdAt: Date;
 
-  @ManyToMany(() => UserRole, (ur) => ur.user, { cascade: true })
+  @OneToMany(() => UserRole, (ur) => ur.user, { cascade: true })
   roles: UserRole[];
 
   @OneToMany(() => Address, (a) => a.user)

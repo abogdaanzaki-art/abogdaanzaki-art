@@ -8,7 +8,6 @@ import {
   JoinColumn,
   ManyToMany,
   JoinTable,
-  Index,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
 import { ServiceType } from '../../service-type/entities/service-type.entity';
@@ -20,7 +19,6 @@ export class AssistantProfile {
   id: number;
 
   @Column({ name: 'user_id', unique: true })
-  @Index()
   userId: number;
 
   @OneToOne(() => User, (u) => u.assistantProfile, { onDelete: 'CASCADE' })
@@ -30,16 +28,16 @@ export class AssistantProfile {
   @Column({ type: 'text', nullable: true })
   bio: string;
 
-  @Column({ name: 'profile_image_url', nullable: true })
+  @Column({ name: 'profile_image_url', type: 'varchar', length: 500, nullable: true })
   profileImageUrl: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'varchar', length: 100, nullable: true })
   city: string;
 
-  @Column({ name: 'verification_status', type: 'varchar', default: 'PENDING' })
+  @Column({ name: 'verification_status', type: 'varchar', length: 20, default: 'PENDING' })
   verificationStatus: VerificationStatus;
 
-  @Column({ name: 'is_available', default: true })
+  @Column({ name: 'is_available', default: false })
   isAvailable: boolean;
 
   @CreateDateColumn({ name: 'created_at', type: 'datetime' })
