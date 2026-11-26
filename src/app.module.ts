@@ -11,6 +11,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentModule } from './payment/payment.module';
 import { ReviewModule } from './review/review.module';
 import { AssistantProfileModule } from './assistant-profile/assistant-profile.module';
+import { FavoritesModule } from './favorites/favorites.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { AssistantProfileModule } from './assistant-profile/assistant-profile.mo
     PaymentModule,
     ReviewModule,
     AssistantProfileModule,
+    FavoritesModule,
   ],
 })
 export class AppModule {}
