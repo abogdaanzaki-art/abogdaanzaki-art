@@ -9,6 +9,7 @@ import { PromotionService } from '../promotion/entities/promotion-service.entity
 import { Address } from '../address/entities/address.entity';
 import { User } from '../users/entities/user.entity';
 import { UserRole } from '../roles/entities/user-role.entity';
+import { AssistantProfile } from '../assistant-profile/entities/assistant-profile.entity';
 import { OrdersService } from './orders.service';
 import { OrdersController } from './orders.controller';
 import { AssignmentsService } from './assignments.service';
@@ -27,6 +28,7 @@ import { PricingService } from './pricing.service';
       Address,
       User,
       UserRole,
+      AssistantProfile,
     ]),
   ],
   providers: [OrdersService, AssignmentsService, PricingService],

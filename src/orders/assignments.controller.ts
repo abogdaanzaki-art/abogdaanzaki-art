@@ -22,8 +22,13 @@ export class AssignmentsController {
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'CUSTOMER')
   @Post('order-items/:id/offers')
-  offer(@Param('id') id: string, @Body() dto: OfferAssignmentsDto) {
-    return this.assignmentsService.offer(parseInt(id, 10), dto);
+  offer(
+    @CurrentUser('sub') actorId: number,
+    @CurrentUser() user: JwtPayload,
+    @Param('id') id: string,
+    @Body() dto: OfferAssignmentsDto,
+  ) {
+    return this.assignmentsService.offer(parseInt(id, 10), dto, actorId, user.roles);
   }
 
   // ---- Assistant: my offers ----

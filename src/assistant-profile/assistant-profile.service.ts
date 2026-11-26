@@ -188,7 +188,7 @@ export class AssistantProfileService {
     qb.orderBy('p.updatedAt', 'DESC').skip(skip).take(take);
     const [rows, total] = await qb.getManyAndCount();
     const ratings = await this.getAvgRatings(rows.map((r) => r.userId));
-    const data = rows.map((p) => this.toPublicDto(p, ratings.get(p.userId) ?? null));
+    const data = rows.map((p) => this.toPublicDto(p, ratings.get(p.userId)?.avg ?? null));
     return paginated(data, total, page, limit);
   }
 
@@ -226,7 +226,7 @@ export class AssistantProfileService {
     qb.skip(skip).take(take);
     const [rows, total] = await qb.getManyAndCount();
     const ratings = await this.getAvgRatings(rows.map((r) => r.userId));
-    const data = rows.map((p) => this.toAdminDto(p, ratings.get(p.userId) ?? null));
+    const data = rows.map((p) => this.toAdminDto(p, ratings.get(p.userId)?.avg ?? null));
     return paginated(data, total, page, limit);
   }
 

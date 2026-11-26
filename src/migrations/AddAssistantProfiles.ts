@@ -12,7 +12,7 @@ export class AddAssistantProfiles1700000001000 implements MigrationInterface {
         \`profile_image_url\` VARCHAR(500) NULL,
         \`city\` VARCHAR(100) NULL,
         \`verification_status\` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-        \`is_available\` TINYINT NOT NULL DEFAULT 1,
+        \`is_available\` TINYINT NOT NULL DEFAULT 0,
         \`created_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         \`updated_at\` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE INDEX \`IDX_assistant_profiles_user\` (\`user_id\`),
