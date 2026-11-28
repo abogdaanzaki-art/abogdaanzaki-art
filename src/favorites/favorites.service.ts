@@ -82,8 +82,9 @@ export class FavoritesService {
     if (existing) throw new ConflictException('This assistant is already in your favorites');
 
     const fav = this.favorites.create({ customerId, assistantId });
+    let saved: FavoriteAssistant;
     try {
-      await this.favorites.save(fav);
+      saved = await this.favorites.save(fav);
     } catch (err: any) {
       if (err && err.code === 'ER_DUP_ENTRY') {
         throw new ConflictException('This assistant is already in your favorites');
@@ -93,7 +94,7 @@ export class FavoritesService {
 
     const stats = await this.getRatingStats([assistantId]);
     const stat = stats.get(assistantId) ?? { avg: null, count: 0 };
-    return this.toDto(fav, assistant, profile, stat.avg, stat.count);
+    return this.toDto(saved, assistant, profile, stat.avg, stat.count);
   }
 
   async list(customerId: number, query: any) {

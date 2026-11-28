@@ -10,7 +10,6 @@ import { UserRole } from '../../roles/entities/user-role.entity';
 import { Address } from '../../address/entities/address.entity';
 import { Order } from '../../orders/entities/order.entity';
 import { OrderItemAssignment } from '../../orders/entities/order-item-assignment.entity';
-import { Payment } from '../../payment/entities/payment.entity';
 import { Review } from '../../review/entities/review.entity';
 import { AssistantProfile } from '../../assistant-profile/entities/assistant-profile.entity';
 import { FavoriteAssistant } from '../../favorites/entities/favorite-assistant.entity';
@@ -29,7 +28,7 @@ export class User {
   @Column({ nullable: true })
   phone: string;
 
-  @Column({ name: 'password_hash' })
+  @Column({ name: 'password_hash', select: false })
   passwordHash: string;
 
   @Column({ name: 'is_active', default: true })
@@ -49,9 +48,6 @@ export class User {
 
   @OneToMany(() => OrderItemAssignment, (a) => a.assistant)
   assignments: OrderItemAssignment[];
-
-  @OneToMany(() => Payment, (p) => p.order)
-  paymentsInitiated: Payment[];
 
   @OneToMany(() => Review, (r) => r.customer)
   reviewsGiven: Review[];

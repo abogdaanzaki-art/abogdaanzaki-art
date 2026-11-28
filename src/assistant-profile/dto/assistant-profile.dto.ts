@@ -3,7 +3,7 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
-  IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -79,6 +79,6 @@ export class UpdateAvailabilityDto {
 
 export class UpdateVerificationDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
-  @IsEnum(['APPROVED', 'REJECTED'])
+  @IsIn(['APPROVED', 'REJECTED'])
   verificationStatus: 'APPROVED' | 'REJECTED';
 }

@@ -8,6 +8,7 @@ import { PricingService } from './pricing.service';
 import { CreateOrderDto, UpdateOrderDto } from './dto/order.dto';
 import { OrderStatus } from './order-status.enum';
 import { paginate, paginated } from '../common/pagination';
+import { toSafeOrder, toSafeOrderArray } from '../common/safe-responses.dto';
 
 @Injectable()
 export class OrdersService {
@@ -56,7 +57,12 @@ export class OrdersService {
         await em.save(item);
         order.items.push(item);
       }
-      return this.findOne(order.id, customerId);
+
+      const reloaded = await em.findOne(Order, {
+        where: { id: order.id },
+        relations: ['items', 'items.serviceType', 'items.assignments', 'items.assignments.assistant', 'customer', 'address', 'promotion'],
+      });
+      return toSafeOrder(reloaded!);
     });
   }
 
@@ -70,7 +76,7 @@ export class OrdersService {
       .orderBy('o.createdAt', 'DESC');
     if (query.status) qb.andWhere('o.status = :status', { status: query.status });
     const [data, total] = await qb.skip(skip).take(take).getManyAndCount();
-    return paginated(data, total, page, limit);
+    return paginated(toSafeOrderArray(data), total, page, limit);
   }
 
   async findAllAdmin(query: any) {
@@ -84,7 +90,7 @@ export class OrdersService {
     if (query.status) qb.andWhere('o.status = :status', { status: query.status });
     if (query.customerId) qb.andWhere('o.customerId = :cid', { cid: query.customerId });
     const [data, total] = await qb.skip(skip).take(take).getManyAndCount();
-    return paginated(data, total, page, limit);
+    return paginated(toSafeOrderArray(data), total, page, limit);
   }
 
   async findOne(id: number, userId?: number, requireOwnership = false) {
@@ -96,11 +102,16 @@ export class OrdersService {
     if (requireOwnership && order.customerId !== userId) {
       throw new ForbiddenException('Order does not belong to you');
     }
-    return order;
+    return toSafeOrder(order);
   }
 
   async update(id: number, userId: number, dto: UpdateOrderDto) {
-    const order = await this.findOne(id, userId, true);
+    const order = await this.orders.findOne({
+      where: { id },
+      relations: ['items'],
+    });
+    if (!order) throw new NotFoundException('Order not found');
+    if (order.customerId !== userId) throw new ForbiddenException('Order does not belong to you');
     if (order.status === 'COMPLETED' || order.status === 'CANCELLED') {
       throw new BadRequestException('Cannot update a completed or cancelled order');
     }
@@ -115,7 +126,8 @@ export class OrdersService {
         await this.items.save(order.items);
       }
     }
-    return this.orders.save(order);
+    await this.orders.save(order);
+    return this.findOne(id, userId, true);
   }
 
   async cancel(id: number, userId: number) {

@@ -45,10 +45,13 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.users.findOne({
-      where: { email: dto.email },
-      relations: ['roles', 'roles.role'],
-    });
+    const user = await this.users
+      .createQueryBuilder('u')
+      .leftJoinAndSelect('u.roles', 'ur')
+      .leftJoinAndSelect('ur.role', 'r')
+      .addSelect('u.passwordHash')
+      .where('u.email = :email', { email: dto.email })
+      .getOne();
     if (!user) throw new UnauthorizedException('Invalid credentials');
     const ok = await bcrypt.compare(dto.password, user.passwordHash);
     if (!ok) throw new UnauthorizedException('Invalid credentials');

@@ -1,11 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Role } from './entities/role.entity';
 import { UserRole } from './entities/user-role.entity';
 import { User } from '../users/entities/user.entity';
-
-const PROTECTED_ROLES = ['ASSISTANT', 'ADMIN'];
 
 @Injectable()
 export class RolesService {
@@ -25,9 +23,9 @@ export class RolesService {
     return role;
   }
 
-  async assignRole(userId: number, roleName: string, actorRoles: string[]) {
+  async assignRole(userId: number, roleName: string) {
     const role = await this.findByName(roleName);
-    const user = await this.users.findOne({ where: { id: userId }, relations: ['roles'] });
+    const user = await this.users.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
     const existing = await this.userRoles.findOne({ where: { userId, roleId: role.id } });

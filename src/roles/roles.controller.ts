@@ -1,15 +1,18 @@
-import { Body, Controller, Delete, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiProperty, ApiTags } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsIn, IsNotEmpty, IsString } from 'class-validator';
 import { RolesService } from './roles.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 
+const ASSIGNABLE_ROLES = ['ASSISTANT', 'ADMIN', 'CUSTOMER'] as const;
+
 class AssignRoleDto {
-  @ApiProperty({ example: 'ASSISTANT' })
+  @ApiProperty({ enum: ASSIGNABLE_ROLES, example: 'ASSISTANT' })
   @IsString()
   @IsNotEmpty()
+  @IsIn(ASSIGNABLE_ROLES)
   roleName: string;
 }
 
@@ -20,6 +23,7 @@ class AssignRoleDto {
 export class RolesController {
   constructor(private rolesService: RolesService) {}
 
+  @Roles('ADMIN')
   @Get()
   list() {
     return this.rolesService.findAll();
@@ -27,18 +31,19 @@ export class RolesController {
 
   @Roles('ADMIN')
   @Post('users/:userId')
-  assign(@Param('userId') userId: string, @Body() dto: AssignRoleDto) {
-    return this.rolesService.assignRole(parseInt(userId, 10), dto.roleName, []);
+  assign(@Param('userId', ParseIntPipe) userId: number, @Body() dto: AssignRoleDto) {
+    return this.rolesService.assignRole(userId, dto.roleName);
   }
 
   @Roles('ADMIN')
   @Delete('users/:userId/:roleName')
-  remove(@Param('userId') userId: string, @Param('roleName') roleName: string) {
-    return this.rolesService.removeRole(parseInt(userId, 10), roleName);
+  remove(@Param('userId', ParseIntPipe) userId: number, @Param('roleName') roleName: string) {
+    return this.rolesService.removeRole(userId, roleName);
   }
 
+  @Roles('ADMIN')
   @Get('users/:userId')
-  userRoles(@Param('userId') userId: string) {
-    return this.rolesService.getUserRoles(parseInt(userId, 10));
+  userRoles(@Param('userId', ParseIntPipe) userId: number) {
+    return this.rolesService.getUserRoles(userId);
   }
 }

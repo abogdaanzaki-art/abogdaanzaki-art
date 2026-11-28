@@ -11,6 +11,7 @@ import { Review } from './entities/review.entity';
 import { Order } from '../orders/entities/order.entity';
 import { OrderItemAssignment } from '../orders/entities/order-item-assignment.entity';
 import { CreateReviewDto } from './dto/review.dto';
+import { toSafeReview, toSafeReviewArray } from '../common/safe-responses.dto';
 
 @Injectable()
 export class ReviewService {
@@ -28,7 +29,6 @@ export class ReviewService {
       throw new BadRequestException('Cannot review before order is completed');
     }
 
-    // Ensure the assistant actually participated in the order
     const participated = await this.assignments.findOne({
       where: { assistantId: dto.assistantId, status: 'ACCEPTED' },
       relations: ['orderItem'],
@@ -49,18 +49,25 @@ export class ReviewService {
       rating: dto.rating,
       comment: dto.comment,
     });
-    return this.reviews.save(review);
+    const saved = await this.reviews.save(review);
+    const reloaded = await this.reviews.findOne({
+      where: { id: saved.id },
+      relations: ['customer', 'assistant'],
+    });
+    return toSafeReview(reloaded!);
   }
 
-  findByAssistant(assistantId: number) {
-    return this.reviews.find({
+  async findByAssistant(assistantId: number) {
+    const reviews = await this.reviews.find({
       where: { assistantId },
       relations: ['customer', 'order'],
       order: { createdAt: 'DESC' },
     });
+    return toSafeReviewArray(reviews);
   }
 
-  findByOrder(orderId: number) {
-    return this.reviews.find({ where: { orderId }, relations: ['assistant', 'customer'] });
+  async findByOrder(orderId: number) {
+    const reviews = await this.reviews.find({ where: { orderId }, relations: ['assistant', 'customer'] });
+    return toSafeReviewArray(reviews);
   }
 }
